@@ -1,3 +1,5 @@
+/* so yeah it's a slightly modified sdl example intended to create echo from the microphone with a specified delay because reasons */
+
 /*
   Copyright (C) 1997-2016 Sam Lantinga <slouken@libsdl.org>
 
@@ -13,15 +15,32 @@
 
 #include <stdlib.h>
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/emscripten.h>
-#endif
-
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static SDL_AudioSpec spec;
 static SDL_AudioDeviceID devid_in = 0;
 static SDL_AudioDeviceID devid_out = 0;
+
+static Uint32 startplayback(Uint32 interval, void *param)
+{
+	SDL_Event event;
+	SDL_UserEvent userevent;
+
+	/* In this example, our callback pushes an SDL_USEREVENT event
+	   into the queue, and causes our callback to be called again at the
+	   same interval: */
+
+	userevent.type = SDL_USEREVENT;
+	userevent.code = 0;
+	userevent.data1 = NULL;
+	userevent.data2 = NULL;
+
+	event.type = SDL_USEREVENT;
+	event.user = userevent;
+
+	SDL_PushEvent(&event);
+	return(interval);
+}
 
 static void
 loop()
@@ -36,17 +55,9 @@ loop()
             if (e.key.keysym.sym == SDLK_ESCAPE) {
                 please_quit = SDL_TRUE;
             }
-        } else if (e.type == SDL_MOUSEBUTTONDOWN) {
-            if (e.button.button == 1) {
-                SDL_PauseAudioDevice(devid_out, SDL_TRUE);
-                SDL_PauseAudioDevice(devid_in, SDL_FALSE);
-            }
-        } else if (e.type == SDL_MOUSEBUTTONUP) {
-            if (e.button.button == 1) {
-                SDL_PauseAudioDevice(devid_in, SDL_TRUE);
-                SDL_PauseAudioDevice(devid_out, SDL_FALSE);
-            }
-        }
+	} else if (e.type == SDL_USEREVENT) {
+		SDL_PauseAudioDevice(devid_out, SDL_FALSE);
+	}
     }
 
     if (SDL_GetAudioDeviceStatus(devid_in) == SDL_AUDIO_PLAYING) {
@@ -54,6 +65,7 @@ loop()
     } else {
         SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
     }
+
     SDL_RenderClear(renderer);
     SDL_RenderPresent(renderer);
 
@@ -67,9 +79,6 @@ loop()
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
-        #ifdef __EMSCRIPTEN__
-        emscripten_cancel_main_loop();
-        #endif
         exit(0);
     }
 
@@ -90,10 +99,19 @@ int
 main(int argc, char **argv)
 {
     /* (argv[1] == NULL means "open default device.") */
-    const char *devname = argv[1];
+    const char *devname = NULL;
     SDL_AudioSpec wanted;
     int devcount;
     int i;
+    int delay;
+
+    if (argc > 3 || argc < 2) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "mecho delay(ms) [device]\n");
+        return (1);
+    }
+    if (argc == 3)
+	    devname = argv[2];
+    delay = atoi (argv[1]);
 
     /* Enable standard application logging */
     SDL_LogSetPriority(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO);
@@ -145,7 +163,7 @@ main(int argc, char **argv)
             devname ? devname : "[[default]]",
             devname ? "'" : "");
 
-    devid_in = SDL_OpenAudioDevice(argv[1], SDL_TRUE, &spec, &spec, 0);
+    devid_in = SDL_OpenAudioDevice(devname, SDL_TRUE, &spec, &spec, 0);
     if (!devid_in) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Couldn't open an audio device for capture: %s!\n", SDL_GetError());
         SDL_Quit();
@@ -154,11 +172,11 @@ main(int argc, char **argv)
 
     SDL_Log("Ready! Hold down mouse or finger to record!\n");
 
-#ifdef __EMSCRIPTEN__
-    emscripten_set_main_loop(loop, 0, 1);
-#else
-    while (1) { loop(); SDL_Delay(16); }
-#endif
+    SDL_PauseAudioDevice(devid_in, SDL_FALSE);
+    SDL_PauseAudioDevice(devid_out, SDL_TRUE);
+
+    SDL_AddTimer(delay, startplayback, NULL);
+    while (1) { loop(); SDL_Delay(100); }
 
     return 0;
 }
